@@ -24,6 +24,9 @@ namespace ObjToNbt
             [Option('f', "floodfill", Required = false, Default = false, HelpText = "Fill the object with blocks. WARNING: center must be part of the object!")]
             public bool FloodFill { get; set; }
 
+            [Option('t', "texture", Required = false, Default = false, HelpText = "Texturize the object. Further information will be asked. Can load .mtl and texture file if they are in the same folder with the .obj")]
+            public bool Texturize { get; set; }
+
         }
 
         public static void Main(string[] args)
@@ -47,29 +50,132 @@ namespace ObjToNbt
                 return;
             }
 
-            HashSet<(int x, int y, int z)>? blocks = Voxelizer.Voxelize(options.Value.InputPath);
-            if (blocks == null)
+            bool colorize = false;
+            Colorizer colorizer = new Colorizer();
+            if (options.Value.Texturize)
             {
-                Console.WriteLine("No blocks to export.");
-                return;
+                var mtlPath = options.Value.InputPath.Replace(".obj", ".mtl");
+                if (File.Exists(mtlPath))
+                {
+                    if (colorizer.LoadMtl(mtlPath))
+                    {
+                        Console.WriteLine("Found valid mtl file and texture, want to load it? (Y/N)");
+                        var key = Console.ReadKey();
+                        Console.WriteLine();
+                        if (key.Key == ConsoleKey.Y)
+                        {
+                            Console.WriteLine("Enter material csv path (empty for default):");
+                            var csvPath = Console.ReadLine();
+                            if (!string.IsNullOrEmpty(csvPath))
+                            {
+                                if (colorizer.LoadCsv(csvPath))
+                                {
+                                    Console.WriteLine("Loaded material csv file.");
+                                    colorize = true;
+                                }
+                                else
+                                {
+                                    Console.WriteLine("Failed to load material csv file.");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("Using default material csv file.");
+                                colorize = true;
+                            }
+                        }
+                    }
+                }
+
+                if (!colorize)
+                {
+                    Console.WriteLine("Please enter texture to load. (Make sure it is the same used of UV mapping)");
+                    var texturePath = Console.ReadLine();
+                    if (string.IsNullOrEmpty(texturePath))
+                    {
+                        Console.WriteLine("No texture path provided.");
+                        return;
+                    }
+                    if (colorizer.LoadImage(texturePath))
+                    {
+                        Console.WriteLine($"Loaded texture: {texturePath}");
+                        colorize = true;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Texture file not found: {texturePath}");
+                        return;
+                    }
+
+                    Console.WriteLine("Enter material csv path (empty for default):");
+                    var csvPath = Console.ReadLine();
+                    if (!string.IsNullOrEmpty(csvPath))
+                    {
+                        if (colorizer.LoadCsv(csvPath))
+                        {
+                            Console.WriteLine("Loaded material csv file.");
+                            colorize = true;
+                        }
+                        else
+                        {
+                            Console.WriteLine("Failed to load material csv file.");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("Using default material csv file.");
+                        colorize = true;
+                    }
+                }
             }
 
-            if(options.Value.FloodFill)
+            HashSet<((int x, int y, int z), string blockId)>? structure = null;
+
+            if (colorize)
             {
-                blocks = Voxelizer.FloodFill(blocks);
+                structure = Voxelizer.VoxelizeColorized(options.Value.InputPath, ref colorizer);
+                if (structure == null)
+                {
+                    Console.WriteLine("No blocks to export.");
+                    return;
+                }
+                if (options.Value.FloodFill)
+                {
+                    Console.WriteLine("Flood fill is not supported with colorized voxelization.");
+                }
+            }
+            else
+            {
+
+                HashSet<(int x, int y, int z)>? blocks = Voxelizer.Voxelize(options.Value.InputPath);
+                if (blocks == null)
+                {
+                    Console.WriteLine("No blocks to export.");
+                    return;
+                }
+
+
+                if (options.Value.FloodFill)
+                {
+                    blocks = Voxelizer.FloodFill(blocks);
+                }
+
+                Console.WriteLine($"Total Blocks: {blocks.Count}");
+
+                structure = blocks
+                    .Select(b => (b, options.Value.BlockName))
+                    .ToHashSet();
             }
 
-            Console.WriteLine($"Total Blocks: {blocks.Count}");
-
-            List<HashSet<(int x, int y, int z)>> chunks = new List<HashSet<(int x, int y, int z)>>();
+            List<HashSet<((int x, int y, int z) coords, string blockId)>> chunks = new List<HashSet<((int x, int y, int z) coords, string blockId)>>();
             if (options.Value.ChunkSize > 0)
             {
-                chunks = Chunkify(blocks, options.Value.ChunkSize);
+                chunks = Chunkify(structure, options.Value.ChunkSize);
                 Console.WriteLine($"Total Chunks: {chunks.Count}");
             }
             else
             {
-                chunks.Add(blocks);
+                chunks.Add(structure);
             }
 
             string outputPath = options.Value.InputPath.Replace(".obj", ".nbt");
@@ -84,34 +190,34 @@ namespace ObjToNbt
 
             if (chunks.Count == 1)
             {
-                NbtExporter.ExportToStructureNbt(outputPath, blocks, options.Value.BlockName);
+                NbtExporter.ExportToStructureNbt(outputPath, structure);
             }
             else
             {
                 Console.WriteLine($"Exporting {chunks.Count} chunks to {outputPath}");
                 foreach (var c in chunks)
                 {
-                    var chunkPath = outputPath.Replace(".nbt", $"_{c.First().x}_{c.First().y}_{c.First().z}.nbt");
-                    NbtExporter.ExportToStructureNbt(chunkPath, c, options.Value.BlockName);
+                    var chunkPath = outputPath.Replace(".nbt", $"_{c.First().coords.x}_{c.First().coords.y}_{c.First().coords.z}.nbt");
+                    NbtExporter.ExportToStructureNbt(chunkPath, c);
                 }
             }
         }
 
-        static List<HashSet<(int x, int y, int z)>> Chunkify(HashSet<(int x, int y, int z)> blocks, int chunkSize)
+        static List<HashSet<((int x, int y, int z) coords, string blockId)>> Chunkify(HashSet<((int x, int y, int z) coords, string blockId)> blocks, int chunkSize)
         {
-            var chunks = new List<HashSet<(int x, int y, int z)>>();
-            var currentChunk = new HashSet<(int x, int y, int z)>();
-            blocks = blocks.OrderBy(b => b.z).ToHashSet();
-            int currentZ = blocks.First().z;
+            var chunks = new List<HashSet<((int x, int y, int z) coords, string blockId)>>();
+            var currentChunk = new HashSet<((int x, int y, int z) coords, string blockId)>();
+            blocks = blocks.OrderBy(b => b.coords.z).ToHashSet();
+            int currentZ = blocks.First().coords.z;
             foreach (var block in blocks)
             {
-                if (currentChunk.Count >= chunkSize && block.z > currentZ)
+                if (currentChunk.Count >= chunkSize && block.coords.z > currentZ)
                 {
                     chunks.Add(currentChunk);
-                    currentChunk = new HashSet<(int x, int y, int z)>();
+                    currentChunk = new HashSet<((int x, int y, int z) coords, string blockId)>();
                 }
                 currentChunk.Add(block);
-                currentZ = block.z;
+                currentZ = block.coords.z;
             }
             if (currentChunk.Count > 0)
             {
