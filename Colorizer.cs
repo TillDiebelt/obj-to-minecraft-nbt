@@ -9,7 +9,7 @@ namespace ObjToNbt
 
         public Colorizer()
         {
-            colorPicker.SetDefault("terracotta");
+            colorPicker.SetDefault("glas");
         }
 
         public bool LoadMtl(string path)

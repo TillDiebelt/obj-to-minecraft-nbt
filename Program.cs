@@ -1,4 +1,5 @@
-﻿using CommandLine;
+﻿using System.Runtime.CompilerServices;
+using CommandLine;
 
 namespace ObjToNbt
 {
@@ -52,6 +53,7 @@ namespace ObjToNbt
 
             bool colorize = false;
             Colorizer colorizer = new Colorizer();
+            bool randomize = false;
             if (options.Value.Texturize)
             {
                 var mtlPath = options.Value.InputPath.Replace(".obj", ".mtl");
@@ -87,8 +89,31 @@ namespace ObjToNbt
                     }
                 }
 
+                bool select = false;
                 if (!colorize)
                 {
+                    Console.WriteLine("Want to load Texture Image or Randomize with Csv?");
+                    Console.WriteLine("1. Load Texture Image");
+                    Console.WriteLine("2. Randomize with Csv");
+                    var choice = Console.ReadKey();
+                    Console.WriteLine();
+                    if (choice.Key == ConsoleKey.D1 || choice.Key == ConsoleKey.NumPad1)
+                    {
+                        select = true;
+                    }
+                    else if (choice.Key == ConsoleKey.D2 || choice.Key == ConsoleKey.NumPad2)
+                    {
+                        randomize = true;
+                    }
+                    else
+                    {
+                        Console.WriteLine("Invalid choice. Exiting.");
+                        return;
+                    }
+                }
+                if (select)
+                {
+
                     Console.WriteLine("Please enter texture to load. (Make sure it is the same used of UV mapping)");
                     var texturePath = Console.ReadLine();
                     if (string.IsNullOrEmpty(texturePath))
@@ -155,16 +180,41 @@ namespace ObjToNbt
                 }
 
 
-                if (options.Value.FloodFill)
-                {
-                    blocks = Voxelizer.FloodFill(blocks);
-                }
 
                 Console.WriteLine($"Total Blocks: {blocks.Count}");
 
-                structure = blocks
-                    .Select(b => (b, options.Value.BlockName))
-                    .ToHashSet();
+                if(randomize)
+                {
+                    Console.WriteLine("Randomizing blocks with CSV file.");
+                    Console.WriteLine("Enter CSV path for randomizer blocks (empty for default):");
+                    var csvPath = Console.ReadLine();
+                    if (string.IsNullOrEmpty(csvPath))
+                    {
+                        csvPath = "random.csv"; // Default path
+                    }
+                    var randomizerBlocks = ReadCsvRandomizerBlocks(csvPath);
+                    if (randomizerBlocks.Count == 0)
+                    {
+                        Console.WriteLine("No randomizer blocks found in CSV.");
+                        return;
+                    }
+                    Console.WriteLine($"Randomizer blocks found: {randomizerBlocks.Count}");
+                    structure = Voxelizer.FloodColorizeRandom(blocks, randomizerBlocks);
+                    if (options.Value.FloodFill)
+                    {
+                        blocks = Voxelizer.FloodFill(blocks);
+                    }
+                }
+                else
+                {
+                    if (options.Value.FloodFill)
+                    {
+                        blocks = Voxelizer.FloodFill(blocks);
+                    }
+                    structure = blocks
+                        .Select(b => (b, options.Value.BlockName))
+                        .ToHashSet();
+                }
             }
 
             List<HashSet<((int x, int y, int z) coords, string blockId)>> chunks = new List<HashSet<((int x, int y, int z) coords, string blockId)>>();
@@ -224,6 +274,28 @@ namespace ObjToNbt
                 chunks.Add(currentChunk);
             }
             return chunks;
+        }
+
+        static List<(string blockId, double chance)> ReadCsvRandomizerBlocks(string csvPath)
+        {
+            if (!File.Exists(csvPath))
+            {
+                Console.WriteLine($"CSV file not found: {csvPath}");
+                return new List<(string blockId, double chance)>();
+            }
+            var lines = File.ReadAllLines(csvPath);
+            var blocks = new List<(string blockId, double chance)>();
+            foreach (var line in lines)
+            {
+                var parts = line.Split(',');
+                if (parts.Length != 2 || !double.TryParse(parts[1], out double chance))
+                {
+                    Console.WriteLine($"Invalid line in CSV: {line}");
+                    continue;
+                }
+                blocks.Add((parts[0].Trim(), chance));
+            }
+            return blocks;
         }
     }
 }

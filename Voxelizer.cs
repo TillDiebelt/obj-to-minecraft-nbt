@@ -353,6 +353,76 @@ namespace ObjToNbt
             return filled;
         }
 
+        public static HashSet<((int x, int y, int z) coord, string blockId)> FloodColorizeRandom(HashSet<(int x, int y, int z)> blocks, List<(string id, double chance)> blockIds)
+        {
+            var filled = new HashSet<((int x, int y, int z) coord, string blockId)>();
+            var seen = new HashSet<(int x, int y, int z)>();
+            while(filled.Count < blocks.Count)
+            {
+                var first = blocks.Except(seen).FirstOrDefault();
+                Queue<(int x, int y, int z)> todo = new Queue<(int x, int y, int z)>();
+                todo.Enqueue(first);
+                var random = new Random();
+                while (todo.Count > 0)
+                {
+                    var current = todo.Dequeue();
+                    if (seen.Contains(current)) continue;
+                    List<(int x, int y, int z)> neighbors = new List<(int x, int y, int z)>();
+                    foreach (var offset in new[] { (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1) })
+                    {
+                        if (!blocks.Contains((current.x + offset.Item1, current.y + offset.Item2, current.z + offset.Item3))) continue;
+                        todo.Enqueue((current.x + offset.Item1, current.y + offset.Item2, current.z + offset.Item3));
+                        neighbors.Add((current.x + offset.Item1, current.y + offset.Item2, current.z + offset.Item3));
+                    }
+
+                    // Randomly select a block ID based on the provided chances and neighbors
+                    string selectedBlockId = "";
+                    if (neighbors.Count > 0)
+                    {
+                        var neighborBlockIds = neighbors.Select(n => filled.FirstOrDefault(f => f.coord == n).blockId).Where(id => !string.IsNullOrEmpty(id)).ToList();
+                        if (neighborBlockIds.Count > 0)
+                        {
+                            selectedBlockId = neighborBlockIds[random.Next(neighborBlockIds.Count)];
+                        }
+                        else
+                        {
+                            var totalChance = blockIds.Sum(b => b.chance);
+                            var randomValue = random.NextDouble() * totalChance;
+                            double cumulativeChance = 0.0;
+                            foreach (var blockId in blockIds)
+                            {
+                                cumulativeChance += blockId.chance;
+                                if (randomValue < cumulativeChance)
+                                {
+                                    selectedBlockId = blockId.id;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var totalChance = blockIds.Sum(b => b.chance);
+                        var randomValue = random.NextDouble() * totalChance;
+                        double cumulativeChance = 0.0;
+                        foreach (var blockId in blockIds)
+                        {
+                            cumulativeChance += blockId.chance;
+                            if (randomValue < cumulativeChance)
+                            {
+                                selectedBlockId = blockId.id;
+                                break;
+                            }
+                        }
+                    }
+                    filled.Add((current, selectedBlockId));
+                    seen.Add(current);
+                    // Enqueue neighboring blocks
+                }
+            }
+            return filled;
+        }
+
         static Vector3 FindInside(HashSet<(int x, int y, int z)> blocks)
         {
             var minX = blocks.Min(b => b.x);
